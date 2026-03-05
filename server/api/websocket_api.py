@@ -2,9 +2,9 @@
 
 import asyncio
 import json
-import subprocess
 import tempfile
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -92,12 +92,16 @@ async def broadcast_event(event: str, payload: dict) -> None:
     await manager.broadcast_to_all({"event": event, "payload": payload})
 
 
-def convert_webm_to_pcm(audio_bytes: bytes) -> bytes:
+async def convert_webm_to_pcm(audio_bytes: bytes) -> bytes:
+    src_path: Path | None = None
+    dst_path: Path | None = None
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as src, tempfile.NamedTemporaryFile(
         suffix=".wav", delete=False
     ) as dst:
         src.write(audio_bytes)
         src.flush()
+        src_path = Path(src.name)
+        dst_path = Path(dst.name)
 
         cmd = [
             "ffmpeg",
@@ -112,9 +116,23 @@ def convert_webm_to_pcm(audio_bytes: bytes) -> bytes:
             "wav",
             dst.name,
         ]
-        subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        with open(dst.name, "rb") as f:
-            return f.read()
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        if proc.returncode != 0:
+            pcm = b""
+        else:
+            with open(dst.name, "rb") as f:
+                pcm = f.read()
+
+    if src_path:
+        src_path.unlink(missing_ok=True)
+    if dst_path:
+        dst_path.unlink(missing_ok=True)
+    return pcm
 
 
 @router.websocket("/ws/instructor")
@@ -157,7 +175,9 @@ async def audio_ws(ws: WebSocket) -> None:
     try:
         while True:
             audio_bytes = await ws.receive_bytes()
-            pcm = await asyncio.to_thread(convert_webm_to_pcm, audio_bytes)
+            pcm = await convert_webm_to_pcm(audio_bytes)
+            if not pcm:
+                continue
             text = await asyncio.to_thread(stt_engine.transcribe_chunk, pcm)
             events = await agent.process_transcript(text)
             for event in events:

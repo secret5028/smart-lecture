@@ -81,21 +81,66 @@
     </section>
 
     <section v-if="tab==='lecture'" class="grid md:grid-cols-3 gap-4">
-      <article class="md:col-span-2 bg-white rounded-xl p-4 shadow space-y-3">
-        <p class="text-sm text-slate-600">과목: {{ plan.subject || '미설정' }}</p>
-        <p class="text-sm text-slate-600">목표: {{ objectivesText.split('\n').find(v => v.trim()) || '미설정' }}</p>
-        <div class="flex gap-2">
-          <button @click="startSession" class="bg-blue-600 text-white px-3 py-2 rounded">강의 시작</button>
-          <button @click="endSession" class="bg-slate-700 text-white px-3 py-2 rounded">강의 종료</button>
+      <article class="md:col-span-2 bg-white rounded-xl p-4 shadow space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p class="text-sm text-slate-600">과목: {{ plan.subject || '미설정' }}</p>
+            <p class="text-sm text-slate-600">목표: {{ objectivesText.split('\n').find(v => v.trim()) || '미설정' }}</p>
+          </div>
+          <div class="flex gap-2">
+            <button @click="startSession" class="bg-blue-600 text-white px-3 py-2 rounded">강의 시작</button>
+            <button @click="endSession" class="bg-slate-700 text-white px-3 py-2 rounded">강의 종료</button>
+          </div>
         </div>
         <p>경과 시간: {{ elapsed }}</p>
         <p>현재 섹션: {{ state.current_section_id || '-' }}</p>
+        <div class="bg-white border rounded p-3">
+          <div class="flex items-center justify-between text-sm mb-2">
+            <span class="font-medium">현재 강의 진행률</span>
+            <span class="font-bold text-blue-700">{{ progressPct }}%</span>
+          </div>
+          <div class="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+            <div class="h-3 bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500 transition-all" :style="{ width: progressPct + '%' }"></div>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 border rounded p-3">
+          <div class="flex items-center justify-between">
+            <label class="text-sm font-medium">강의 진행률 조절</label>
+            <span class="text-sm font-semibold">{{ progressPct }}%</span>
+          </div>
+          <input type="range" min="0" max="100" v-model.number="progressPct" @change="updateProgress" class="w-full mt-2" />
+        </div>
+
+        <div>
+          <p class="text-sm font-medium mb-2">목차 섹션 선택</p>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="sec in sectionOptions"
+              :key="sec.id"
+              @click="selectSection(sec.title)"
+              class="px-3 py-1.5 rounded border text-sm"
+              :class="state.current_section_id===sec.title ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300'"
+            >
+              {{ sec.title }}
+            </button>
+          </div>
+        </div>
+
         <h3 class="font-semibold">AI 추천 슬라이드</h3>
         <div class="grid md:grid-cols-3 gap-3">
-          <div v-for="(s,i) in recommendations" :key="i" class="border rounded p-3">
-            <p class="font-medium">{{ s.title }}</p>
-            <ul class="text-sm list-disc pl-5"><li v-for="(b,j) in s.bullets" :key="j">{{ b }}</li></ul>
-            <button @click="showSlide(s)" class="mt-2 bg-indigo-600 text-white px-2 py-1 rounded">화면에 표시</button>
+          <div
+            v-for="(s,i) in recommendations"
+            :key="i"
+            @click="showSlide(s)"
+            class="cursor-pointer border rounded-xl p-3 hover:shadow-md transition bg-slate-900 text-slate-100"
+          >
+            <div class="text-xs text-slate-300 mb-1">{{ s.current_section || '섹션 미설정' }} · {{ s.progress_pct || 0 }}%</div>
+            <p class="font-semibold text-lg leading-tight mb-2">{{ s.title }}</p>
+            <ul class="text-sm space-y-1">
+              <li v-for="(b,j) in s.bullets" :key="j" class="truncate">• {{ b }}</li>
+            </ul>
+            <p class="text-[11px] text-slate-400 mt-2 truncate">출처: {{ (s.source_chunk_ids || []).join(', ') || '없음' }}</p>
           </div>
         </div>
       </article>
@@ -144,6 +189,7 @@
           transcripts: [],
           agentMessages: [],
           state: {},
+          progressPct: 0,
           startedAt: null,
           nowTick: Date.now(),
           timerId: null,
@@ -159,7 +205,13 @@
           const m = String(Math.floor(sec / 60)).padStart(2, '0');
           const s = String(sec % 60).padStart(2, '0');
           return `${m}:${s}`;
-        }
+        },
+        sectionOptions() {
+          return (this.plan.toc || []).map((s, idx) => ({
+            id: s.id || `sec-${idx+1}`,
+            title: s.title || `섹션 ${idx+1}`,
+          }));
+        },
       },
       methods: {
         async api(path, method='GET', body=null) {
@@ -243,6 +295,11 @@
             if (msg.event === 'transcript_update') this.transcripts.push(msg.payload.text);
             if (msg.event === 'agent_message') this.agentMessages.push(msg.payload.message);
             if (msg.event === 'recommendations_update') this.recommendations = msg.payload.slides || [];
+            if (msg.event === 'slide_change') {
+              const slide = msg.payload.slide || {};
+              if (slide.current_section) this.state.current_section_id = slide.current_section;
+              if (slide.progress_pct !== undefined) this.progressPct = Number(slide.progress_pct || 0);
+            }
           };
         },
         async loadRecommendations() {
@@ -253,6 +310,7 @@
         async startSession() {
           const data = await this.api('/api/lecture/session/start','POST');
           this.state = data.state;
+          this.progressPct = Number(this.state.progress_pct || 0);
           this.startedAt = Date.now();
           this.nowTick = Date.now();
           if (!this.timerId) {
@@ -263,13 +321,32 @@
         async endSession() {
           const data = await this.api('/api/lecture/session/end','POST');
           this.state = data.state;
+          this.progressPct = Number(this.state.progress_pct || 0);
           this.startedAt = null;
           if (this.timerId) {
             clearInterval(this.timerId);
             this.timerId = null;
           }
         },
-        async loadState() { this.state = await this.api('/api/lecture/state'); },
+        async loadState() {
+          this.state = await this.api('/api/lecture/state');
+          this.progressPct = Number(this.state.progress_pct || 0);
+        },
+        async selectSection(sectionTitle) {
+          this.state = await this.api('/api/lecture/state/section', 'POST', {
+            section_id: sectionTitle,
+            progress_pct: this.progressPct,
+          });
+          await this.loadRecommendations();
+        },
+        async updateProgress() {
+          const section = this.state.current_section_id || this.sectionOptions[0]?.title || '섹션 1';
+          this.state = await this.api('/api/lecture/state/section', 'POST', {
+            section_id: section,
+            progress_pct: this.progressPct,
+          });
+          await this.loadRecommendations();
+        },
         async searchKnowledge() {
           if (!this.searchQ.trim()) return;
           this.knowledgeItems = await this.api(`/api/knowledge/search?q=${encodeURIComponent(this.searchQ)}`);

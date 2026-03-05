@@ -20,19 +20,6 @@ def load_embedding_model(model_name: str = "paraphrase-multilingual-MiniLM-L12-v
 
 
 class KnowledgeRetriever:
-    def search(self, query: str, top_k: int = 5, filter_type: str | None = None) -> list[dict]:
-        sql = "SELECT * FROM chunks WHERE is_processed = 1"
-        params: list = []
-        if query:
-            sql += " AND content LIKE ?"
-            params.append(f"%{query}%")
-        if filter_type in {"text", "image"}:
-            sql += " AND content_type = ?"
-            params.append(filter_type)
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params.append(top_k)
-        return []
-
     async def search_async(self, query: str, top_k: int = 5, filter_type: str | None = None) -> list[dict]:
         sql = "SELECT * FROM chunks WHERE is_processed = 1"
         params: list = []

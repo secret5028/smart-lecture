@@ -51,24 +51,24 @@ async def save_plan(payload: LecturePlanPayload) -> dict:
 
 @router.get("/api/lecture/state")
 async def get_state() -> dict:
-    return lecture_state.get_state()
+    return await lecture_state.hydrate_state()
 
 
 @router.post("/api/lecture/state/section")
 async def set_section(payload: SectionPayload) -> dict:
-    return lecture_state.update_section(payload.section_id, payload.progress_pct)
+    return await lecture_state.update_section(payload.section_id, payload.progress_pct)
 
 
 @router.post("/api/lecture/session/start")
 async def start_session() -> dict:
     session_id = str(uuid.uuid4())
-    state = lecture_state.start_session(session_id)
+    state = await lecture_state.start_session(session_id)
     plan = await database.get_lecture_plan() or {}
     toc = plan.get("toc") or []
     if toc:
         first = toc[0]
         section_title = first.get("title") or first.get("id") or "섹션 1"
-        state = lecture_state.update_section(section_title, 0)
+        state = await lecture_state.update_section(section_title, 0)
 
     agent = get_agent()
     slides = await agent.get_recommendations()
@@ -87,7 +87,7 @@ async def start_session() -> dict:
 
 @router.post("/api/lecture/session/end")
 async def end_session() -> dict:
-    state = lecture_state.end_session()
+    state = await lecture_state.end_session()
     return {"message": "강의를 종료했습니다.", "state": state}
 
 

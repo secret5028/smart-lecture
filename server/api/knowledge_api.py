@@ -1,12 +1,23 @@
 ﻿from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
 from server.db.database import fetch_all, fetch_one
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+
+
+def _to_image_url(image_path: str | None) -> str | None:
+    if not image_path:
+        return None
+    normalized = image_path.replace("\\", "/")
+    if normalized.startswith("/chunks/"):
+        return normalized
+    name = Path(normalized).name
+    return f"/chunks/{name}"
 
 
 @router.get("/tree")
@@ -50,6 +61,7 @@ async def get_chunks(category_small: str) -> list[dict]:
     )
     for r in rows:
         r["keywords"] = json.loads(r.get("keywords") or "[]")
+        r["image_url"] = _to_image_url(r.get("image_path"))
     return rows
 
 
@@ -59,6 +71,7 @@ async def get_chunk(chunk_id: str) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail="청크를 찾을 수 없습니다.")
     row["keywords"] = json.loads(row.get("keywords") or "[]")
+    row["image_url"] = _to_image_url(row.get("image_path"))
     return row
 
 
@@ -70,4 +83,5 @@ async def search_chunks(q: str) -> list[dict]:
     )
     for r in rows:
         r["keywords"] = json.loads(r.get("keywords") or "[]")
+        r["image_url"] = _to_image_url(r.get("image_path"))
     return rows

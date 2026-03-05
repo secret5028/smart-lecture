@@ -16,11 +16,13 @@ from server.api.lecture_api import router as lecture_router
 from server.api.slide_api import router as slide_router
 from server.api.websocket_api import router as websocket_router
 from server.db.database import init_db
+from server.lecture.lecture_state import hydrate_state
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await hydrate_state()
     load_stt_engine(WHISPER_MODEL)
     load_embedding_model(EMBEDDING_MODEL)
     init_agent(DEFAULT_WAKE_WORD)
