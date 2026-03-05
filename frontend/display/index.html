@@ -1,0 +1,76 @@
+﻿<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lecture Copilot 학생 화면</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #000; color: #fff; font-family: "Noto Sans KR", sans-serif; overflow: hidden; }
+    .layer { position: absolute; inset: 0; }
+    #slide-layer { z-index: 10; padding: 3vh 4vw; opacity: 0; transition: opacity 300ms ease; }
+    #slide-layer.show { opacity: 1; }
+    #avatar-layer { z-index: 20; display: none; }
+    #interaction-layer { z-index: 30; display: none; }
+    .meta { font-size: 1.1vw; opacity: 0.8; }
+    h1 { margin: 2vh 0; font-size: 4vw; }
+    ul { font-size: 2vw; line-height: 1.5; }
+    #slide-image { max-width: 50vw; max-height: 45vh; object-fit: contain; }
+    #slide-progress-bar { position: absolute; left: 0; bottom: 0; height: 6px; width: 30%; background: #22c55e; transition: width 300ms ease; }
+  </style>
+</head>
+<body>
+  <div id="slide-layer" class="layer">
+    <div class="meta" id="meta">과목명 | 현재 섹션</div>
+    <h1 id="slide-title">강의 시작 대기 중</h1>
+    <ul id="slide-bullets"></ul>
+    <img id="slide-image" alt="슬라이드 이미지" />
+    <div id="slide-progress-bar" title="진도율"></div>
+  </div>
+  <div id="avatar-layer" class="layer"></div>
+  <div id="interaction-layer" class="layer"></div>
+
+  <script>
+    const slideLayer = document.getElementById('slide-layer');
+    const titleEl = document.getElementById('slide-title');
+    const bulletsEl = document.getElementById('slide-bullets');
+    const imageEl = document.getElementById('slide-image');
+    const metaEl = document.getElementById('meta');
+    const progressEl = document.getElementById('slide-progress-bar');
+
+    function renderSlide(slide) {
+      slideLayer.classList.remove('show');
+      setTimeout(() => {
+        titleEl.textContent = slide.title || '제목 없음';
+        bulletsEl.innerHTML = '';
+        (slide.bullets || []).forEach((b) => {
+          const li = document.createElement('li');
+          li.textContent = b;
+          bulletsEl.appendChild(li);
+        });
+
+        if (slide.image_path) {
+          imageEl.src = slide.image_path;
+          imageEl.style.display = 'block';
+        } else {
+          imageEl.removeAttribute('src');
+          imageEl.style.display = 'none';
+        }
+
+        metaEl.textContent = `${slide.subject || '과목 미설정'} | ${slide.current_section || '섹션 미설정'}`;
+        const p = Math.max(0, Math.min(100, slide.progress_pct || 0));
+        progressEl.style.width = `${p}%`;
+        progressEl.title = `${slide.current_section || '현재 섹션'} (${p}%)`;
+        slideLayer.classList.add('show');
+      }, 150);
+    }
+
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/display`);
+    ws.onopen = () => slideLayer.classList.add('show');
+    ws.onmessage = (evt) => {
+      const msg = JSON.parse(evt.data);
+      if (msg.event === 'slide_change') renderSlide(msg.payload.slide || {});
+    };
+  </script>
+</body>
+</html>
