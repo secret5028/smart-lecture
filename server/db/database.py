@@ -130,3 +130,11 @@ async def insert_chunks(rows: list[dict[str, Any]]) -> None:
         """,
         values,
     )
+
+
+async def has_processed_source_file(source_file: str) -> bool:
+    row = await fetch_one(
+        "SELECT id FROM chunks WHERE source_file = ? AND is_processed = 1 LIMIT 1",
+        (source_file,),
+    )
+    return row is not None

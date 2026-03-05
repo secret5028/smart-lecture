@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import hashlib
 from io import BytesIO
 from pathlib import Path
 
@@ -13,11 +14,32 @@ except Exception:  # pragma: no cover
     fitz = None
 
 
+def _image_hash(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _load_existing_hash_map() -> dict[str, Path]:
+    hashes: dict[str, Path] = {}
+    for p in CHUNK_IMAGE_DIR.glob("*.png"):
+        if p.stem.endswith("_thumb"):
+            continue
+        try:
+            hashes[_image_hash(p.read_bytes())] = p
+        except Exception:
+            continue
+    return hashes
+
+
+def _thumb_path(image_path: Path) -> Path:
+    return image_path.with_name(f"{image_path.stem}_thumb{image_path.suffix}")
+
+
 def parse_pdf(pdf_path: Path) -> list[dict]:
     if fitz is None:
         raise RuntimeError("pymupdf(fitz)가 설치되지 않았습니다.")
 
     items: list[dict] = []
+    known_hashes = _load_existing_hash_map()
     doc = fitz.open(pdf_path)
 
     try:
@@ -46,13 +68,21 @@ def parse_pdf(pdf_path: Path) -> list[dict]:
                     image_bytes = base["image"]
                     pil = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-                    image_name = f"{pdf_path.stem}_p{page_number}_{img_idx}.png"
-                    image_path = CHUNK_IMAGE_DIR / image_name
-                    pil.save(image_path, format="PNG")
+                    buffer = BytesIO()
+                    pil.save(buffer, format="PNG")
+                    png_bytes = buffer.getvalue()
+                    digest = _image_hash(png_bytes)
 
-                    thumb = pil.copy()
-                    thumb.thumbnail((200, 200))
-                    thumb.save(CHUNK_IMAGE_DIR / f"{pdf_path.stem}_p{page_number}_{img_idx}_thumb.png", format="PNG")
+                    if digest in known_hashes:
+                        image_path = known_hashes[digest]
+                    else:
+                        image_path = CHUNK_IMAGE_DIR / f"img_{digest[:16]}.png"
+                        image_path.write_bytes(png_bytes)
+                        known_hashes[digest] = image_path
+
+                        thumb = pil.copy()
+                        thumb.thumbnail((200, 200))
+                        thumb.save(_thumb_path(image_path), format="PNG")
 
                     items.append(
                         {
@@ -64,7 +94,6 @@ def parse_pdf(pdf_path: Path) -> list[dict]:
                         }
                     )
             else:
-                # 텍스트/이미지 모두 빈 페이지일 때도 최소 레코드는 남긴다.
                 items.append(
                     {
                         "source_file": pdf_path.name,

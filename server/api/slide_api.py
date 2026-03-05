@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 
 from server.ai.agent import get_agent
 from server.api.websocket_api import manager
-from server.db.database import fetch_all, fetch_one
+from server.db.database import fetch_all, get_lecture_plan
+from server.lecture.lecture_state import get_state
 
 router = APIRouter(prefix="/api/slide", tags=["slide"])
 
@@ -25,7 +26,14 @@ class ComposePayload(BaseModel):
 @router.post("/show")
 async def show_slide(payload: ShowSlidePayload) -> dict:
     global _current_slide
-    _current_slide = payload.slide
+    plan = await get_lecture_plan() or {}
+    state = get_state()
+    _current_slide = {
+        **payload.slide,
+        "subject": payload.slide.get("subject") or plan.get("subject") or "과목 미설정",
+        "current_section": payload.slide.get("current_section") or state.get("current_section_id") or "섹션 미설정",
+        "progress_pct": payload.slide.get("progress_pct") if payload.slide.get("progress_pct") is not None else state.get("progress_pct", 0),
+    }
     event = {"event": "slide_change", "payload": {"slide": _current_slide}}
     await manager.broadcast_to_room("display", event)
     await manager.broadcast_to_room("instructor", event)

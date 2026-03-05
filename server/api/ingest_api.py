@@ -46,6 +46,9 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict:
 
     upload_dir = await get_upload_dir()
     save_path = upload_dir / file.filename
+    if save_path.exists():
+        raise HTTPException(status_code=409, detail="같은 이름의 파일이 이미 존재합니다.")
+
     async with aiofiles.open(save_path, "wb") as f:
         while chunk := await file.read(1024 * 1024):
             await f.write(chunk)
@@ -70,14 +73,25 @@ async def run_ingest(background_tasks: BackgroundTasks, filename: str | None = N
 
     upload_dir = await get_upload_dir()
     targets: list[Path] = []
+    skipped_files: list[str] = []
     if filename:
         path = upload_dir / filename
         if not path.exists():
             raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
-        targets = [path]
+        if await database.has_processed_source_file(filename):
+            skipped_files.append(filename)
+        else:
+            targets = [path]
     else:
-        targets = sorted(upload_dir.glob("*.pdf"))
+        all_files = sorted(upload_dir.glob("*.pdf"))
+        for file_path in all_files:
+            if await database.has_processed_source_file(file_path.name):
+                skipped_files.append(file_path.name)
+                continue
+            targets.append(file_path)
 
+    if not targets and skipped_files:
+        return {"message": "새로 분석할 파일이 없습니다.", "files": [], "skipped_files": skipped_files}
     if not targets:
         raise HTTPException(status_code=400, detail="처리할 PDF 파일이 없습니다.")
 
@@ -86,7 +100,7 @@ async def run_ingest(background_tasks: BackgroundTasks, filename: str | None = N
             await _run_file_pipeline(pdf, subject, gemini_api_key)
 
     background_tasks.add_task(run_all)
-    return {"message": "파이프라인을 시작했습니다.", "files": [p.name for p in targets]}
+    return {"message": "파이프라인을 시작했습니다.", "files": [p.name for p in targets], "skipped_files": skipped_files}
 
 
 @router.get("/progress")
@@ -119,6 +133,4 @@ async def delete_file(filename: str) -> dict:
     path = upload_dir / filename
     if path.exists():
         path.unlink()
-
-    await database.execute("DELETE FROM chunks WHERE source_file = ?", (filename,))
-    return {"message": "삭제되었습니다.", "filename": filename}
+    return {"message": "삭제되었습니다. (기존 분석 데이터는 유지됨)", "filename": filename}

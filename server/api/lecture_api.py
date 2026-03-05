@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from config import DEFAULT_WAKE_WORD
 from server.ai.agent import get_agent
+from server.api.websocket_api import manager
 from server.db import database
 from server.lecture import lecture_state
 
@@ -62,6 +63,25 @@ async def set_section(payload: SectionPayload) -> dict:
 async def start_session() -> dict:
     session_id = str(uuid.uuid4())
     state = lecture_state.start_session(session_id)
+    plan = await database.get_lecture_plan() or {}
+    toc = plan.get("toc") or []
+    if toc:
+        first = toc[0]
+        section_title = first.get("title") or first.get("id") or "섹션 1"
+        state = lecture_state.update_section(section_title, 0)
+
+    agent = get_agent()
+    slides = await agent.get_recommendations()
+    if slides:
+        first_slide = {
+            **slides[0],
+            "subject": plan.get("subject") or slides[0].get("subject") or "과목 미설정",
+            "current_section": state.get("current_section_id") or slides[0].get("current_section") or "섹션 미설정",
+            "progress_pct": state.get("progress_pct", 0),
+        }
+        await manager.broadcast_to_room("display", {"event": "slide_change", "payload": {"slide": first_slide}})
+        await manager.broadcast_to_room("instructor", {"event": "slide_change", "payload": {"slide": first_slide}})
+        await manager.broadcast_to_room("instructor", {"event": "recommendations_update", "payload": {"slides": slides}})
     return {"message": "강의를 시작했습니다.", "state": state}
 
 

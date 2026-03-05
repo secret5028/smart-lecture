@@ -23,6 +23,10 @@ async def run_pipeline(
         if progress_cb:
             await progress_cb({"step": step, "progress": progress, "message": message})
 
+    if await database.has_processed_source_file(pdf_path.name):
+        await emit("done", 100, f"이미 분석된 파일 건너뜀: {pdf_path.name}")
+        return {"saved_chunks": 0, "file": pdf_path.name, "skipped": True}
+
     await emit("parsing", 10, "PDF 파싱 중...")
     pages = await asyncio.to_thread(parse_pdf, pdf_path)
 
@@ -52,4 +56,4 @@ async def run_pipeline(
     await database.insert_chunks(processed)
 
     await emit("done", 100, "완료")
-    return {"saved_chunks": len(processed), "file": pdf_path.name}
+    return {"saved_chunks": len(processed), "file": pdf_path.name, "skipped": False}

@@ -46,9 +46,14 @@
 
       <article class="bg-white rounded-xl p-4 shadow space-y-3">
         <h2 class="font-semibold">강의 정보</h2>
-        <input v-model="plan.subject" type="text" placeholder="과목명" class="w-full border rounded px-3 py-2" />
+        <label class="block text-sm">강의 과목</label>
+        <input v-model="plan.subject" type="text" placeholder="예: 열역학" class="w-full border rounded px-3 py-2" />
+        <label class="block text-sm">강의 대상</label>
         <input v-model="plan.target_audience" type="text" placeholder="예: 공학과 2학년" class="w-full border rounded px-3 py-2" />
+        <label class="block text-sm">강의 목표</label>
         <textarea v-model="objectivesText" placeholder="목표를 한 줄씩 입력하세요" class="w-full border rounded px-3 py-2 h-24"></textarea>
+        <label class="block text-sm">강의 목차</label>
+        <textarea v-model="tocText" placeholder="한 줄에 하나씩 입력 (예: 1. 상태량과 단위)" class="w-full border rounded px-3 py-2 h-24"></textarea>
         <div class="grid grid-cols-2 gap-2">
           <input v-model.number="plan.total_sessions" type="number" placeholder="총 차시 수" class="border rounded px-3 py-2" />
           <input v-model.number="plan.minutes_per_session" type="number" placeholder="차시당 시간 (분)" class="border rounded px-3 py-2" />
@@ -77,6 +82,8 @@
 
     <section v-if="tab==='lecture'" class="grid md:grid-cols-3 gap-4">
       <article class="md:col-span-2 bg-white rounded-xl p-4 shadow space-y-3">
+        <p class="text-sm text-slate-600">과목: {{ plan.subject || '미설정' }}</p>
+        <p class="text-sm text-slate-600">목표: {{ objectivesText.split('\n').find(v => v.trim()) || '미설정' }}</p>
         <div class="flex gap-2">
           <button @click="startSession" class="bg-blue-600 text-white px-3 py-2 rounded">강의 시작</button>
           <button @click="endSession" class="bg-slate-700 text-white px-3 py-2 rounded">강의 종료</button>
@@ -130,6 +137,7 @@
           settings: { wake_word: '코덱스야', gemini_api_key: '', whisper_model: 'small', upload_dir: '' },
           plan: { subject: '', target_audience: '', total_sessions: null, minutes_per_session: null },
           objectivesText: '',
+          tocText: '',
           files: [],
           ingestStatus: { message: '대기 중' },
           recommendations: [],
@@ -137,6 +145,8 @@
           agentMessages: [],
           state: {},
           startedAt: null,
+          nowTick: Date.now(),
+          timerId: null,
           searchQ: '',
           knowledgeItems: [],
           ws: null,
@@ -145,7 +155,7 @@
       computed: {
         elapsed() {
           if (!this.startedAt) return '-';
-          const sec = Math.floor((Date.now() - this.startedAt) / 1000);
+          const sec = Math.floor((this.nowTick - this.startedAt) / 1000);
           const m = String(Math.floor(sec / 60)).padStart(2, '0');
           const s = String(sec % 60).padStart(2, '0');
           return `${m}:${s}`;
@@ -180,13 +190,19 @@
           if (Object.keys(p).length) {
             this.plan = p;
             this.objectivesText = (p.learning_objectives || []).join('\n');
+            this.tocText = (p.toc || []).map(v => v.title || '').filter(Boolean).join('\n');
           }
         },
         async savePlan() {
+          const toc = this.tocText
+            .split('\n')
+            .map(v => v.trim())
+            .filter(Boolean)
+            .map((title, idx) => ({ id: `sec-${idx+1}`, title, order: idx + 1, session: idx + 1 }));
           const payload = {
             ...this.plan,
             learning_objectives: this.objectivesText.split('\n').map(v => v.trim()).filter(Boolean),
-            toc: this.plan.toc || [],
+            toc,
           };
           await this.api('/api/lecture/plan','POST',payload);
           alert('저장되었습니다.');
@@ -201,7 +217,12 @@
           if (!res.ok) { alert('파일 업로드에 실패했습니다.'); return; }
           await this.loadFiles();
         },
-        async runIngest() { await this.api('/api/ingest/run','POST'); },
+        async runIngest() {
+          const res = await this.api('/api/ingest/run','POST');
+          if (res.skipped_files?.length) {
+            this.ingestStatus = { message: `기존 분석 파일 건너뜀: ${res.skipped_files.join(', ')}` };
+          }
+        },
         async deleteFile(name) {
           if (!confirm('삭제하시겠습니까?')) return;
           await this.api(`/api/ingest/files/${name}`,'DELETE');
@@ -233,11 +254,20 @@
           const data = await this.api('/api/lecture/session/start','POST');
           this.state = data.state;
           this.startedAt = Date.now();
+          this.nowTick = Date.now();
+          if (!this.timerId) {
+            this.timerId = setInterval(() => { this.nowTick = Date.now(); }, 1000);
+          }
+          await this.loadRecommendations();
         },
         async endSession() {
           const data = await this.api('/api/lecture/session/end','POST');
           this.state = data.state;
           this.startedAt = null;
+          if (this.timerId) {
+            clearInterval(this.timerId);
+            this.timerId = null;
+          }
         },
         async loadState() { this.state = await this.api('/api/lecture/state'); },
         async searchKnowledge() {
@@ -245,7 +275,13 @@
           this.knowledgeItems = await this.api(`/api/knowledge/search?q=${encodeURIComponent(this.searchQ)}`);
         }
       },
-      mounted() { this.init(); }
+      mounted() { this.init(); },
+      beforeUnmount() {
+        if (this.timerId) {
+          clearInterval(this.timerId);
+          this.timerId = null;
+        }
+      }
     }).mount('#app');
   </script>
 </body>
