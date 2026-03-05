@@ -47,9 +47,11 @@ class LectureAgent:
     async def get_recommendations(self) -> list[dict]:
         plan = await get_lecture_plan() or {}
         settings = await get_settings()
-        query = self.context.recent_text(count=5)
+        raw_query = self.context.recent_text(count=5)
+        query = self._build_query_keywords(raw_query)
         if not query:
-            query = " ".join((plan.get("learning_objectives") or [])[:2]) or (plan.get("subject") or "강의 시작")
+            seed = " ".join((plan.get("learning_objectives") or [])[:2]) or (plan.get("subject") or "강의 시작")
+            query = self._build_query_keywords(seed) or seed
 
         objectives = plan.get("learning_objectives") or []
         toc = plan.get("toc") or []
@@ -181,6 +183,19 @@ class LectureAgent:
 
         fallback_dynamic = [self._fallback_slide(chunks, ctx, goal, progress_pct) for ctx in dynamic_contexts]
         return (base_slides + fallback_dynamic)[:RECOMMEND_COUNT]
+
+    def _build_query_keywords(self, text: str) -> str:
+        tokens = [t.strip(".,!?()[]{}\"'") for t in (text or "").split()]
+        tokens = [t for t in tokens if len(t) >= 2]
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for t in tokens:
+            if t in seen:
+                continue
+            seen.add(t)
+            uniq.append(t)
+        uniq.sort(key=len, reverse=True)
+        return " ".join(uniq[:5])
 
     def _fallback_slide(self, chunks: list[dict], context: dict, goal: str, progress_pct: int = 0) -> dict:
         top = chunks[:3]

@@ -23,9 +23,11 @@ class KnowledgeRetriever:
     async def search_async(self, query: str, top_k: int = 5, filter_type: str | None = None) -> list[dict]:
         sql = "SELECT * FROM chunks WHERE is_processed = 1"
         params: list = []
-        if query:
-            sql += " AND content LIKE ?"
-            params.append(f"%{query}%")
+        words = [w.strip() for w in (query or "").split() if len(w.strip()) >= 2]
+        if words:
+            conditions = " OR ".join(["content LIKE ?"] * len(words))
+            sql += f" AND ({conditions})"
+            params.extend([f"%{w}%" for w in words])
         if filter_type in {"text", "image"}:
             sql += " AND content_type = ?"
             params.append(filter_type)
